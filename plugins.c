@@ -1051,6 +1051,21 @@ DEF_PLUGIN_EDITOR_HOOK("Align multi-cursors w/spaces", "Aligns multi-cursors to 
   scratch_end(scratch);
 }
 
+// TODO: this is broken, need to get the cursor posiiton and the line beginning
+DEF_PLUGIN_EDITOR_HOOK("Add a separator comment", "Adds ---- as a code separator block.", C_add_separator) {
+    Temp scratch = scratch_begin(NULL);
+    String8 separator = str8_lit("//----------------------------------------------------------------------");
+    EditorBatchEdit batch;
+    ed_edit_batch_begin(ctx, &batch);
+    EditorBatchInsert ins = {0};
+    ins.size = separator.size;
+    ins.array = push_array(scratch.arena, EditorInsertData, ins.size);
+    ins.array[0].off = 0; // need to get the cursor position and the line, 0 is the absolute beginning of the buffer
+    ins.array[0].buf = separator;
+    ed_edit_batch_insert(&batch, &ins);
+}
+
+
 // TODOS: 
 // 1. Select inside paragraph -  done
 // 2. delete/copy/paste lines in the selection
