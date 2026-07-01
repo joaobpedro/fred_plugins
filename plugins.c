@@ -787,8 +787,9 @@ DEF_PLUGIN_EDITOR_HOOK("Replace selection with numbers", "Replaces the current s
 }
 
 //-------------------------------------------------------------------
-// this works like i want it to, however it requires that the comments are made like this: '// '. i.e.
+// this now works like i want it to, however it requires that the comments are made like this: '// '. i.e.
 // this means it requires the space after the //
+// TODO: make the cursor rest at the end of line
 DEF_PLUGIN_EDITOR_HOOK("Toggle C-style comment line(s)", "Adds a C-style comment to selected lines or current line.", toggle_comment) {
   Temp scratch = scratch_begin(NULL);
   // Get the cursors first.
@@ -1051,25 +1052,43 @@ DEF_PLUGIN_EDITOR_HOOK("Align multi-cursors w/spaces", "Aligns multi-cursors to 
   scratch_end(scratch);
 }
 
-// TODO: this is broken, need to get the cursor posiiton and the line beginning
+
+// TODO: make it possible to insert with multi-cursors
+// seems to be hard to support multi cursors
 DEF_PLUGIN_EDITOR_HOOK("Add a separator comment", "Adds ---- as a code separator block.", C_add_separator) {
     Temp scratch = scratch_begin(NULL);
     String8 separator = str8_lit("//----------------------------------------------------------------------");
     EditorBatchEdit batch;
     ed_edit_batch_begin(ctx, &batch);
     EditorBatchInsert ins = {0};
-    ins.size = separator.size;
-    ins.array = push_array(scratch.arena, EditorInsertData, ins.size);
-    ins.array[0].off = 0; // need to get the cursor position and the line, 0 is the absolute beginning of the buffer
-    ins.array[0].buf = separator;
-    ed_edit_batch_insert(&batch, &ins);
+    
+    // get the cursor position
+    EditorCursorArray cursors = {0};
+    ed_cursor_ranges(scratch.arena, ctx, &cursors);
+    uint64_t insert = 0;
+    
+    ins.size = 1; // size is accually the count
+    for EachIndex(i, cursors.size) {
+        insert = cursors.array[i].cursor_off;
+        ins.array = push_array(scratch.arena, EditorInsertData, ins.size);
+        ins.array[0].off = insert;
+        ins.array[].buf = separator;
+        ed_edit_batch_insert(&batch, &ins);
+    }
 }
 
 
+//----------------------------------------------------------------------
+// copy the lines under the selection of the cursor
+// support only single cursor
+//----------------------------------------------------------------------
+
+
+//----------------------------------------------------------------------
 // TODOS: 
 // 1. Select inside paragraph -  done
 // 2. delete/copy/paste lines in the selection
-// 3. add a separator
+// 3. add a separator - done
 // 2. Multicursor select next occurance - built in - was the wrong keybinding
 // 3. Format md table
 // 4. add check mark to the text, check mark or uncheck
