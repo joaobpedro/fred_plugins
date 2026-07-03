@@ -876,6 +876,8 @@ DEF_PLUGIN_EDITOR_HOOK("Toggle C-style comment line(s)", "Adds a C-style comment
   scratch_end(scratch);
 }
 
+
+//----------------------------------------------------------------------
 // my first fred plugin
 // select the whole line under the cursor
 DEF_PLUGIN_EDITOR_HOOK("Select the whole line.", "Selects the line under the cursor.", C_select_line) {
@@ -904,7 +906,7 @@ DEF_PLUGIN_EDITOR_HOOK("Select the whole line.", "Selects the line under the cur
     scratch_end(scratch);
 }
 
-
+//----------------------------------------------------------------------
 // delete the word under the cursor
 DEF_PLUGIN_EDITOR_HOOK("Delete Word Under Cursor.", "Delete the word under the cursor.", C_delete_word) {
     EditorCmd cmd = {0};
@@ -913,7 +915,7 @@ DEF_PLUGIN_EDITOR_HOOK("Delete Word Under Cursor.", "Delete the word under the c
     cmd.cmd = ED_DelBackspaceWord;
     ed_push_command(ctx, &cmd);
 }
-
+//----------------------------------------------------------------------
 // select content insider brackets
 DEF_PLUGIN_EDITOR_HOOK("Select the contents inside brackets.", "Select contents inside brackets.", C_select_inside_encloser) {
     Temp scratch = scratch_begin(NULL);
@@ -951,7 +953,7 @@ DEF_PLUGIN_EDITOR_HOOK("Select the contents inside brackets.", "Select contents 
     }
     scratch_end(scratch);
 }
-
+//----------------------------------------------------------------------
 // select inside the paragraph
 DEF_PLUGIN_EDITOR_HOOK("Select inside paragraph.", "Select contiguous text.", C_select_inside_paragraph) {
 Temp scratch = scratch_begin(NULL);
@@ -991,7 +993,7 @@ Temp scratch = scratch_begin(NULL);
     scratch_end(scratch);
 }
 
-
+//----------------------------------------------------------------------
 // align multicursors
 // copied from discord, author starfreakclone
 DEF_PLUGIN_EDITOR_HOOK("Align multi-cursors w/spaces", "Aligns multi-cursors to the same column by padding with spaces.", align_multi_cursors) {
@@ -1052,29 +1054,13 @@ DEF_PLUGIN_EDITOR_HOOK("Align multi-cursors w/spaces", "Aligns multi-cursors to 
   scratch_end(scratch);
 }
 
-
-// TODO: make it possible to insert with multi-cursors
-// seems to be hard to support multi cursors
+//----------------------------------------------------------------------
 DEF_PLUGIN_EDITOR_HOOK("Add a separator comment", "Adds ---- as a code separator block.", C_add_separator) {
-    Temp scratch = scratch_begin(NULL);
+    EditorCmd cmd = {0};
+    cmd.cmd = ED_InsInsert;
     String8 separator = str8_lit("//----------------------------------------------------------------------");
-    EditorBatchEdit batch;
-    ed_edit_batch_begin(ctx, &batch);
-    EditorBatchInsert ins = {0};
-    
-    // get the cursor position
-    EditorCursorArray cursors = {0};
-    ed_cursor_ranges(scratch.arena, ctx, &cursors);
-    uint64_t insert = 0;
-    
-    ins.size = 1; // size is accually the count
-    for EachIndex(i, cursors.size) {
-        insert = cursors.array[i].cursor_off;
-        ins.array = push_array(scratch.arena, EditorInsertData, ins.size);
-        ins.array[0].off = insert;
-        ins.array[].buf = separator;
-        ed_edit_batch_insert(&batch, &ins);
-    }
+    cmd.buf = separator;
+    ed_push_command(ctx, &cmd);
 }
 
 
@@ -1082,13 +1068,60 @@ DEF_PLUGIN_EDITOR_HOOK("Add a separator comment", "Adds ---- as a code separator
 // copy the lines under the selection of the cursor
 // support only single cursor
 //----------------------------------------------------------------------
+DEF_PLUGIN_EDITOR_HOOK("Copies all selected lines", "All lines part of a selection are copied.", C_copy_lines) {
+  Temp scratch = scratch_begin(NULL);
+  EditorCmd cmd = {0};
+  EditorCursorArray cursors = {0}; // the information i meed is actually already here
+  ed_cursor_ranges(scratch.arena, ctx, &cursors);
+  uint32_t good = cursors.size > 0; // only supports single cursor
+
+  if (good) {
+    // this gives me the bytes of the beginning and the end of the selection
+    uint64_t sel_start = cursors.array[0].sel.first_off;
+    uint64_t sel_end = cursors.array[0].sel.last_off;
+
+    uint64_t line_start = ed_line_at_offset(ctx, sel_start);
+    uint64_t line_end   = ed_line_at_offset(ctx, sel_end);
+    
+    EditorOffsetRange start_off = {0};
+    EditorOffsetRange end_off   = {0};
+    
+    ed_byte_range_at_line(ctx, line_start, &start_off);
+    ed_byte_range_at_line(ctx, line_end, &end_off); // this is actually the first byte of this line
+    
+    // need to convert from EditorOffsetRange to EditorOffsetArray
+    EditorOffsetArray start_array = {0};
+    EditorOffsetArray end_array = {0};
+    
+    start_array.size = start_off.last_off - start_off.first_off;
+    start_array.array = &start_off.first_off;
+    
+    end_array.size = end_off.last_off - end_off.first_off;
+    end_array.array = &end_off.first_off;
+    
+    // move the cursor to the start position and add to selection
+    cmd.cmd = ED_NavMoveCursorTo;
+    cmd.byte_offsets = start_array; // some type mismatch
+    ed_push_command(ctx, &cmd);
+    cmd.cmd = ED_NavMoveCursorTo;
+    cmd.byte_offsets = end_array;
+    cmd.flags = ED_FLG_UpdateSelection;
+    ed_push_command(ctx, &cmd);
+    cmd.cmd = ED_NavEndOfLine;
+    cmd.flags = ED_FLG_UpdateSelection;
+    ed_push_command(ctx, &cmd);
+    cmd.cmd = ED_RequestClipboardCopy;
+    ed_push_command(ctx, &cmd);
+  }
+  scratch_end(scratch);
+}
 
 
 //----------------------------------------------------------------------
 // TODOS: 
 // 1. Select inside paragraph -  done
-// 2. delete/copy/paste lines in the selection
+// 2. delete/copy/paste lines in the selection - copy its done, also updates selection
 // 3. add a separator - done
-// 2. Multicursor select next occurance - built in - was the wrong keybinding
 // 3. Format md table
 // 4. add check mark to the text, check mark or uncheck
+// FUN ONE - 5. Fix formatting, add 4 spaces when there is something else
