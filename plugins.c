@@ -535,6 +535,15 @@ uint32_t try_f64_from_str8(String8 str, double* result) {
   return try_f64_from_str8_internal(&str, result);
 }
 
+// string compare really, this was taken from discord
+int str8_exact_match(String8 a, String8 b)
+{
+    if (a.size != b.size)
+        return 0;
+    return memcmp(a.str, b.str, a.size) == 0;
+}
+
+
 // API definition hook.
 typedef void(*HotkeyPluginEditorFn)(EditorCtx*);
 
@@ -1116,12 +1125,246 @@ DEF_PLUGIN_EDITOR_HOOK("Copies all selected lines", "All lines part of a selecti
   scratch_end(scratch);
 }
 
+typedef enum {
+    NO_MARK,
+    MARK_EMPTY,
+    MARK_FULL    
+}CheckMarkStatus;
+
+//----------------------------------------------------------------------
+DEF_PLUGIN_EDITOR_HOOK("Manages markdown checkmarks", "Adds a checkmark to an empty line or checks unchecks the checkmark.", C_checkmark) {
+  Temp scratch = scratch_begin(NULL);
+
+  // 1. take the line the cursor is at
+  // 2. check is the check box is in the beginning of the line
+  // 3. if yes, check uncheck if not add check mark
+  EditorCursorArray cursors = {0};
+  ed_cursor_ranges(scratch.arena, ctx, &cursors);
+  int good = 1;
+  // not supporting muiltiple cursors for this one
+  if (cursors.size != 1) {
+    String8 msg = str8_lit("Operation only supported with a single cursor");
+    feed_queue_warning(msg);
+    good = 0;
+  }
+
+  // get the line at the cursor
+  uint64_t line_number = ed_line_at_offset(ctx, cursors.array[0].cursor_off);
+  // check if the beginning of the line has the insert
+  EditorOffsetRange line_range = {0};
+  ed_byte_range_at_line(ctx, line_number, &line_range);
+  String8 line;
+  ed_string_at_range(scratch.arena, ctx, &line_range, &line);
+  // now I have the byte range of the line, need to check the first characters of the line
+  // the line can start with some random amount of space
+  // need to loop over the line, need some kind of pointer aritmetic
+ 
+  // feed_queue_warning_internal(&line);
+
+  CheckMarkStatus check_mark_status = NO_MARK;
+  String8 line_header = {0};
+  String8 check_mark_str_empty = str8_lit("- [ ] ");
+  String8 check_mark_str_full = str8_lit("- [x] ");
+
+  uint64_t line_start_off = 0;
+
+  // determine the status of the line
+  for (uint64_t i = 0; i<line.size; ++i)
+  {
+    if (line.str[i] == ' ' && i < line.size)  // this will only loop over the empty space, need to add the other empty space characters 
+    {
+      continue;
+    } else {
+        // need to declare and update the slice
+        line_start_off = i;
+        line_header = str8_substr(line, .off = i, .len = 6);
+        // feed_queue_error_internal(&line_header);
+        // default case is that there is no checkmark
+        check_mark_status = NO_MARK;
+        // feed_queue_error_internal(&line_header);
+        
+        if (str8_exact_match(line_header, check_mark_str_empty))  check_mark_status = MARK_EMPTY;
+        if (str8_exact_match(line_header, check_mark_str_full))   check_mark_status = MARK_FULL;
+        break;
+    }                  
+    
+  }
+
+  // can optiomize this and put it in the for loop?
+  // debug printing strings
+  // String8 warning1 = str8_lit("case 1");
+  // String8 warning2 = str8_lit("case 2");
+  // String8 warning3 = str8_lit("case 3");
+
+  // depending if the line is empty or not
+  EditorBatchEdit batch;
+
+  switch (check_mark_status) {
+  
+    case MARK_EMPTY:
+        EditorBatchReplace rep = {0};
+        rep.size = 1; // this is just one replace operation
+        rep.array = push_array(scratch.arena, EditorReplaceData, rep.size);
+        
+        EditorOffsetRange replace_range = {0};
+        replace_range.first_off = line_range.first_off + line_start_off + 3;
+        replace_range.last_off = line_range.first_off + line_start_off + 4; // may need to adjust this
+        // print the ranges i am trying to access
+        rep.array[0].range = replace_range; // this shoudl be the location of the space between bracktes
+        rep.array[0].buf = str8_lit("x"); // NOTE: string literal takes doubles quotes, other wiser gives an error that i dont knwo what it is
+        ed_edit_batch_begin(ctx, &batch);
+        ed_edit_batch_replace(&batch, &rep);    
+        ed_edit_batch_end(ctx, &batch); 
+        // feed_queue_error_internal(&warning1);
+        break;
+        
+    case MARK_FULL:
+        // here i need to the remove the x and add a space
+        EditorBatchReplace rep2 = {0};
+        rep2.size = 1; // this is just one replace operation
+        rep2.array = push_array(scratch.arena, EditorReplaceData, rep2.size);
+        
+        EditorOffsetRange replace_range2 = {0};
+        replace_range2.first_off = line_range.first_off + line_start_off + 3;
+        replace_range2.last_off = line_range.first_off + line_start_off + 4; // may need to adjust this
+        // print the ranges i am trying to access
+        rep2.array[0].range = replace_range2; // this shoudl be the location of the space between bracktes
+        rep2.array[0].buf = str8_lit(" "); // NOTE: string literal takes doubles quotes, other wiser gives an error that i dont knwo what it is
+        ed_edit_batch_begin(ctx, &batch);
+        ed_edit_batch_replace(&batch, &rep2);    
+        ed_edit_batch_end(ctx, &batch); 
+        // feed_queue_error_internal(&warning2);
+        break;
+        
+    default:
+        // add the checkmark
+        EditorBatchInsert ins = {0};
+        ins.size = 1; // 6 is the size of the check mark
+        ins.array = push_array(scratch.arena, EditorInsertData, ins.size);
+        ins.array[0].off = line_range.first_off + line_start_off; // need to add the line offset overall
+        ins.array[0].buf = check_mark_str_empty; // this is the insert checkmark
+        ed_edit_batch_begin(ctx, &batch);
+        ed_edit_batch_insert(&batch, &ins); 
+        ed_edit_batch_end(ctx, &batch);       
+        // feed_queue_error_internal(&warning3);
+        break;
+  };
+  
+  scratch_end(scratch);
+}
+
+
+//----------------------------------------------------------------------
+DEF_PLUGIN_EDITOR_HOOK("Removes markdown checkmarks", "Removes a checkmark to an empty line or checks unchecks the checkmark.", C_checkmark_remove) {
+  Temp scratch = scratch_begin(NULL);
+
+  // 1. take the line the cursor is at
+  // 2. check is the check box is in the beginning of the line
+  // 3. if yes, check uncheck if not add check mark
+  EditorCursorArray cursors = {0};
+  ed_cursor_ranges(scratch.arena, ctx, &cursors);
+  int good = 1;
+  // not supporting muiltiple cursors for this one
+  if (cursors.size != 1) {
+    String8 msg = str8_lit("Operation only supported with a single cursor");
+    feed_queue_warning(msg);
+    good = 0;
+  }
+
+  // get the line at the cursor
+  uint64_t line_number = ed_line_at_offset(ctx, cursors.array[0].cursor_off);
+  // check if the beginning of the line has the insert
+  EditorOffsetRange line_range = {0};
+  ed_byte_range_at_line(ctx, line_number, &line_range);
+  String8 line;
+  ed_string_at_range(scratch.arena, ctx, &line_range, &line);
+  // now I have the byte range of the line, need to check the first characters of the line
+  // the line can start with some random amount of space
+  // need to loop over the line, need some kind of pointer aritmetic
+ 
+  // feed_queue_warning_internal(&line);
+
+  CheckMarkStatus check_mark_status = NO_MARK;
+  String8 line_header = {0};
+  String8 check_mark_str_empty = str8_lit("- [ ] ");
+  String8 check_mark_str_full = str8_lit("- [x] ");
+
+  uint64_t line_start_off = 0;
+
+  // determine the status of the line
+  for (uint64_t i = 0; i<line.size; ++i)
+  {
+    if (line.str[i] == ' ' && i < line.size)  // this will only loop over the empty space, need to add the other empty space characters 
+    {
+      continue;
+    } else {
+        // need to declare and update the slice
+        line_start_off = i;
+        line_header = str8_substr(line, .off = i, .len = 6);
+        // feed_queue_error_internal(&line_header);
+        // default case is that there is no checkmark
+        check_mark_status = NO_MARK;
+        // feed_queue_error_internal(&line_header);
+        
+        if (str8_exact_match(line_header, check_mark_str_empty))  check_mark_status = MARK_EMPTY;
+        if (str8_exact_match(line_header, check_mark_str_full))   check_mark_status = MARK_FULL;
+        break;
+    }                  
+    
+  }
+
+  // can optiomize this and put it in the for loop?
+  // debug printing strings
+  // String8 warning1 = str8_lit("case 1");
+  // String8 warning2 = str8_lit("case 2");
+  // String8 warning3 = str8_lit("case 3");
+
+  // depending if the line is empty or not
+  EditorBatchEdit batch;
+
+  switch (check_mark_status) {
+  
+    case MARK_EMPTY:
+        EditorBatchRemove rem1 = {0};
+        rem1.size = 1; // this is just one replace operation
+        rem1.array = push_array(scratch.arena, EditorOffsetRange, rem1.size);
+        
+        // print the ranges i am trying to access
+        rem1.array[0].first_off = line_range.first_off + line_start_off; // this shoudl be the location of the space between bracktes
+        rem1.array[0].last_off = line_range.first_off + line_start_off + 6; // NOTE: string literal takes doubles quotes, other wiser gives an error that i dont knwo what it is
+        ed_edit_batch_begin(ctx, &batch);
+        ed_edit_batch_remove(&batch, &rem1);    
+        ed_edit_batch_end(ctx, &batch); 
+        // feed_queue_error_internal(&warning1);
+        break;
+        
+    case MARK_FULL:
+        EditorBatchRemove rem2 = {0};
+        rem2.size = 1; // this is just one replace operation
+        rem2.array = push_array(scratch.arena, EditorOffsetRange, rem2.size);
+        
+        // print the ranges i am trying to access
+        rem2.array[0].first_off = line_range.first_off + line_start_off; // this shoudl be the location of the space between bracktes
+        rem2.array[0].last_off = line_range.first_off + line_start_off + 6; // NOTE: string literal takes doubles quotes, other wiser gives an error that i dont knwo what it is
+        ed_edit_batch_begin(ctx, &batch);
+        ed_edit_batch_remove(&batch, &rem2);    
+        ed_edit_batch_end(ctx, &batch); 
+        // feed_queue_error_internal(&warning1);
+        break;
+        
+    default:
+        // if there is no check mark do not do anythinf
+        // feed_queue_error_internal(&warning3);
+        break;
+  };
+  
+  scratch_end(scratch);
+}
+
+
 
 //----------------------------------------------------------------------
 // TODOS: 
-// 1. Select inside paragraph -  done
-// 2. delete/copy/paste lines in the selection - copy its done, also updates selection
-// 3. add a separator - done
 // 3. Format md table
-// 4. add check mark to the text, check mark or uncheck
+// 4. add check mark to the text, check mark or uncheck - done, wasn't easy but i made it, and it wasnt easy because of the string literal
 // FUN ONE - 5. Fix formatting, add 4 spaces when there is something else
